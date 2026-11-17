@@ -1,0 +1,106 @@
+# 板载系统参数
+lidar:
+  crc_policy: mid360s_sample # 当前设备点云 CRC=0；视为未提供，不当作 CRC 校验成功
+  expected_serial: ARMCP8H0037373
+  point_data_type: 1         # 实测 Cartesian High，96 点 × 14 字节 + 36 字节头 = 1380
+  frame_duration_s: 0.10     # 约 100 ms/帧，输出约 10 Hz
+  gap_factor: 2.0            # 回跳/包间大缺口仍清理半帧
+  min_range_m: 0.10
+  max_range_m: 100.0
+  queue_capacity: 3
+
+# 飞控协议身份与链路
+mavlink:
+  sysid: 245                 # 板载计算机的系统 ID
+  compid: 1
+  target_system: 1           # 飞机 ID（多机时各不相同）
+  target_component: 1
+  heartbeat_hz: 1.0          # GCS 心跳频率
+  link_timeout: 3.0          # 多久收不到飞控心跳算失联（巡航中触发即报错）
+
+# 上电等待接收路径；文件出现后立即读取并校验，成功后自动启动一条任务。
+mission_input:
+  file: "missions/mission.kml" # 相对启动工作目录；开机服务固定为项目根目录
+  wait_for_file: true
+  height_mode: constant
+  constant_alt_m: 50.0
+  max_bytes: 5242880
+  max_waypoints: 2000
+mission:
+  handover_position_tolerance_m: 5.0 # 起点水平误差超过此值不接管
+  handover_alt_tolerance_m: 0.8
+  wp_reach_tol: 2.0
+  pre_offboard_stream_s: 1.5
+  use_planner: true
+
+# 报文提频（协议 2.5.1，req_stream_id = 报文 ID）
+streaming:
+  request_rates: true
+  global_position_hz: 50     # GLOBAL_POSITION_INT(33)
+  attitude_hz: 100           # ATTITUDE(30)
+  extension_hz: 10           # EXTENDED_SYS_STATE(245)
+
+# 位置采用最新真实位置+速度外推，新定位到达后更换锚点，不等第二帧。
+timing:
+  position_extrapolation_s: 0.25
+
+# 异常处理：统一进安全悬停
+failsafe:
+  gps:
+    enabled: true
+    min_fix: 6               # 0/1 无定位、2 仅 2D、3 起可用、5 RTK 浮动、6 RTK 固定
+    loss_confirm_s: 0.5      # 连续无效多久判丢星
+    rx_timeout_s: 2.0        # 收不到 GPS_RAW_INT 也按丢星处理
+  sensing:
+    enabled: true
+    timeout_s: 0.5           # 没有首帧/雷达断流/地图过期也判失效
+    drop_frames: 10          # 连续丢多少帧（10 Hz 下 ≈1 s）判感知失效
+  hold_recover_confirm_s: 2.0 # 异常全部清除后稳定多久恢复巡航
+
+# 输出形态
+output:
+  setpoint_hz: 50.0          # 20 m/s 时相邻设定点约 0.4 m
+  velocity_feedforward: false # false = 只发位置+yaw（type_mask 0x09F8）
+
+# 机体
+vehicle:
+  radius: 1.24
+  min_obstacle_gap: 1.5      
+
+# 地图
+map:
+  resolution: 0.25
+  size_xy: [216.0, 216.0]    # 半宽 108 m 覆盖 12 m 滑窗偏移 + 90 m 入图及膨胀余量
+  altitude_band_half: 10.0   # 高度带向上半宽
+  max_descent_below_ref: 3.25 
+  map_margin_z: 3.25         
+  min_flight_height: 5.0     # 最低离地高度（相对起飞点）
+  update_range_xy: 90.0      # 覆盖 50 m 制动距离及感知/规划延迟；点云量程过滤仍为 100 m
+  update_range_z: 10.0
+  obstacles_inflation: 2.75
+  local_map_margin: 10
+  recenter_margin: 12.0      # 离窗口中心 12 m 滑动
+
+# 规划器
+planner:
+  max_vel: 20.0             # m/s；同步传给局部目标、优化器和时间重分配
+  max_acc: 4.0
+  planning_horizon: 70.0    # m；4 m/s² 下从静止加速到 20 m/s 需要 50 m
+  local_target_step: 2.0     
+  local_target_max_ratio: 1.5 
+  replan_period: 0.2         # 每个重规划周期前进约 4 m
+  goal_tolerance: 0.5
+  obstacle_clearance: 0.5    
+  ctrl_pt_dist: 1.6          # 速度提高 4 倍，同步增大间距，避免控制点数量暴涨
+  time_forward: 0.25        # yaw 前视约 5 m，保持原 5 m/s × 1 s 的空间尺度
+  astar_pool: [100, 100, 100] 
+
+# 外参：雷达 -> 机体
+extrinsic:
+  R: [1, 0, 0,
+      0, 1, 0,
+      0, 0, 1]
+  t: [0.0, 0.0, 0.0]
+
+# 机载 -> 地面站 上报（UDP，2 Hz JSON）
+uplink: ""                   # 例："192.168.1.100:14560"，空 = 不上报

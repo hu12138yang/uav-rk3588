@@ -1,0 +1,22 @@
+# Build outputs
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# Python caches
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local editor and environment files
+.vscode/
+.idea/
+.env
+.env.*
+!.env.example
+
+# OS metadata
+.DS_Store
+Thumbs.db
