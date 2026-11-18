@@ -75,6 +75,7 @@ namespace ego_onboard
       get(n,"expected_serial",out.lidar.expected_serial);get(n,"point_data_type",out.lidar.point_data_type);
       get(n,"frame_duration_s",out.lidar.frame_duration_s);get(n,"gap_factor",out.lidar.gap_factor);
       get(n,"min_range_m",out.lidar.min_range_m);get(n,"max_range_m",out.lidar.max_range_m);
+      get(n,"planning_range_m",out.lidar.planning_range_m);
       get(n,"queue_capacity",out.lidar.queue_capacity);
       if(!std::isfinite(out.lidar.frame_duration_s)||out.lidar.frame_duration_s<0.02||out.lidar.frame_duration_s>0.2 ||
          !std::isfinite(out.lidar.gap_factor)||out.lidar.gap_factor<1.0||out.lidar.gap_factor>4.0 ||
@@ -159,6 +160,12 @@ namespace ego_onboard
       get(n, "max_descent_below_ref", out.adapter.max_descent_below_ref);
       get(n, "map_margin_z", out.adapter.map_margin_z);
       get(n, "min_flight_height", out.adapter.min_flight_height);
+      if (n["virtual_floor_height"]) {
+        get(n, "virtual_floor_height", out.adapter.virtual_floor_height);
+        if (!std::isfinite(out.adapter.virtual_floor_height) || out.adapter.virtual_floor_height < 0)
+          throw std::runtime_error("map.virtual_floor_height must be finite and nonnegative");
+        out.adapter.use_fixed_virtual_floor = true;
+      }
       get(n, "update_range_xy", out.adapter.occupancy_update_range_xy);
       get(n, "update_range_z", out.adapter.occupancy_update_range_z);
       get(n, "obstacles_inflation", out.adapter.obstacles_inflation);
@@ -251,6 +258,12 @@ namespace ego_onboard
     // At higher speeds a valid spline is not enough: the local target must
     // allow acceleration/braking, and perception must cover the stopping run.
     const auto &p = out.adapter;
+    if (!std::isfinite(out.lidar.planning_range_m) ||
+        out.lidar.planning_range_m <= out.lidar.min_range_m ||
+        out.lidar.planning_range_m > out.lidar.max_range_m) {
+      err = "lidar.planning_range_m must be finite, above min_range_m and no greater than max_range_m";
+      return false;
+    }
     if (!std::isfinite(p.max_vel) || p.max_vel <= 0 ||
         !std::isfinite(p.max_acc) || p.max_acc <= 0 ||
         !std::isfinite(p.planning_horizon) || p.planning_horizon <= 0 ||
@@ -271,6 +284,14 @@ namespace ego_onboard
                               0.15 + p.replan_period + 1.0 / out.pilot.setpoint_hz;
     const double required_range = std::max(p.planning_horizon,
         braking_distance + p.max_vel * reaction_s) + p.obstacles_inflation;
+    if (out.lidar.planning_range_m + 1e-9 < required_range) {
+      std::ostringstream os;
+      os << "lidar.planning_range_m must cover planning/stopping distance and inflation (at least "
+         << required_range << " m for max_vel=" << p.max_vel
+         << " m/s); max_range_m is only the point-cloud cutoff";
+      err = os.str();
+      return false;
+    }
     if (p.occupancy_update_range_xy < required_range) {
       std::ostringstream os;
       os << "map.update_range_xy must cover planning/stopping distance and inflation (at least "
@@ -308,6 +329,11 @@ namespace ego_onboard
     if (out.adapter.max_descent_below_ref < 0.0)
     {
       err = "map.max_descent_below_ref 必须 >= 0";
+      return false;
+    }
+    if (out.adapter.use_fixed_virtual_floor && out.mission_input.height_mode == "constant" &&
+        out.adapter.virtual_floor_height > out.mission_input.constant_alt_m - out.pilot.handover_alt_tolerance_m) {
+      err = "map.virtual_floor_height must not exceed the lower handover height";
       return false;
     }
 

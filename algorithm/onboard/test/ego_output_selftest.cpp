@@ -30,7 +30,7 @@ struct AuditedPlanner : PlannerIO {
   ego_planner::QuadrotorCommand last;
   uint64_t ready = 0, misses = 0;
   bool stepped = false, usable = false;
-  explicit AuditedPlanner(const EgoPlannerAdapterConfig &cfg) : worker(cfg, 50) {}
+  AuditedPlanner(const EgoPlannerAdapterConfig &cfg, double reference_height) : worker(cfg, reference_height) {}
   void onPose(const ego_sensor::TimedPose &p) override { worker.onPose(p); }
   void onScanFrame(const ego_sensor::LidarFrame &f) override { worker.onScanFrame(f); }
   void setLeg(const Eigen::Vector3d &a, const Eigen::Vector3d &b, bool end) override { worker.setLeg(a,b,end); }
@@ -69,13 +69,15 @@ int main(int argc, char **argv) {
   AppConfig app; std::string error;
   if (!loadConfigFile(argv[1],app,error)) { std::puts(error.c_str()); return 2; }
   app.adapter.strict_pose_coverage = true;
-  AuditedPlanner planner(app.adapter);
+  const double altitude = app.mission_input.constant_alt_m;
+  app.pilot.cruise_alt_m = altitude;
+  AuditedPlanner planner(app.adapter,altitude);
   OffboardPilot pilot; pilot.setConfig(app.pilot); pilot.setPlanner(&planner);
   constexpr double lat = 21, lon = 113, radians = kPi / 180;
   const double meters_per_degree = GeoOrigin::kR * radians;
-  pilot.start({{lat,lon,50},{lat,lon + 200 / (meters_per_degree * std::cos(lat*radians)),50}});
+  pilot.start({{lat,lon,altitude},{lat,lon + 200 / (meters_per_degree * std::cos(lat*radians)),altitude}});
   const double begin = monotonicSeconds(), boot_origin = begin - 10;
-  Eigen::Vector3d position(0,0,50), velocity = Eigen::Vector3d::Zero();
+  Eigen::Vector3d position(0,0,altitude), velocity = Eigen::Vector3d::Zero();
   uint8_t mode = MODE_POS_HOLD;
   double next_scan = begin, next_report = begin, maximum_deviation = 0;
   uint64_t matched = 0, mismatched = 0, invalid_wire = 0, scans = 0;
@@ -106,10 +108,10 @@ int main(int argc, char **argv) {
       const auto &pose = pilot.latestPose();
       ego_sensor::LidarFrame frame; frame.t_base = pose.t;
       frame.points.reserve(20000);
-      // The first local target (70,0,50) is clear. A wall at x=25 blocks
-      // the middle of the straight seed, requiring EGO's actual A*/optimizer.
+      // A wall at x=25 blocks the route; target selection may advance past
+      // the inflated wall, but the seed still requires EGO's A*/optimizer.
       for (int i = 0; i < 20000; ++i) {
-        const Eigen::Vector3d world(25, -2 + (i%9)*0.5, 47 + ((i/9)%11)*0.5);
+        const Eigen::Vector3d world(25, -2 + (i%9)*0.5, altitude-3 + ((i/9)%11)*0.5);
         ego_sensor::LidarPoint point;
         point.p = pose.q.conjugate() * (world - pose.p);
         frame.points.push_back(point);
@@ -144,11 +146,19 @@ int main(int argc, char **argv) {
               std::abs(rdF32(p,40)-yawEnuToNed(planner.last.yaw)) < 1e-5 && rdU16(p,48) == 0x09F8;
           if (same) ++matched; else ++mismatched;
           position = enu; velocity = planner.last.velocity;
-          maximum_deviation = std::max(maximum_deviation,std::hypot(position.y(),position.z()-50));
-          // Independent physical-box check, including a conservative voxel pad.
+          maximum_deviation = std::max(maximum_deviation,std::hypot(position.y(),position.z()-altitude));
+          // Independent Euclidean clearance to the physical box, including a
+          // full voxel pad. Expanding its AABB also fills safe diagonal corners
+          // and can report a collision even when actual clearance exceeds 4 m.
           const double padding = app.adapter.obstacles_inflation + app.adapter.resolution;
-          if (std::abs(position.x()-25) <= padding && std::abs(position.y()) <= 2+padding &&
-              position.z() >= 47-padding && position.z() <= 52+padding) collision_free = false;
+          const Eigen::Vector3d distance_to_box(std::abs(position.x()-25),
+            std::max(0.0,std::abs(position.y())-2),
+            std::max(0.0,std::max(altitude-3-position.z(),position.z()-altitude-2)));
+          if (distance_to_box.norm() < padding) {
+            if (collision_free) std::printf("[CLEARANCE] physical-box clearance %.5f m at (%.5f,%.5f,%.5f), required=%.3f\n",
+              distance_to_box.norm(),position.x(),position.y(),position.z(),padding);
+            collision_free = false;
+          }
         }
       }
     }

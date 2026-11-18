@@ -18,6 +18,7 @@ void GridMap::initMap(double resolution, const Eigen::Vector3d &map_size, const 
   mp_.local_map_margin_ = local_map_margin;
   mp_.frame_id_ = frame_id;
   mp_.virtual_ground_height_ = -1e9; // disabled unless setVirtualGroundHeight() is called
+  minimum_center_height_ = -1e9;
 
   if (mp_.virtual_ceil_height_ - mp_.ground_height_ > mp_.map_size_(2))
   {

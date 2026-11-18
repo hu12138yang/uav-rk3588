@@ -87,6 +87,8 @@ public:
   // a virtual floor at height z (in world frame): the planner will not plan below
   // it. Set to -inf to disable. Symmetric to virtual_ceil_height.
   void setVirtualGroundHeight(double z) { mp_.virtual_ground_height_ = z; }
+  // Exact post-inflation center-height boundary, including newly exposed cells.
+  void setMinimumCenterHeight(double z) { minimum_center_height_ = z; }
 
   // Slide the local window (x, y only) so that it is centered at `center`.
   // The occupancy buffer is shifted and cells leaving the window are dropped,
@@ -100,6 +102,7 @@ public:
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
 private:
+  double minimum_center_height_ = -1e9;
   MappingParameters mp_;
   MappingData md_;
 };
@@ -125,6 +128,7 @@ inline void GridMap::boundIndex(Eigen::Vector3i& id) {
 
 inline int GridMap::getInflateOccupancy(Eigen::Vector3d pos) {
   if (!isInMap(pos)) return -1;
+  if (pos.z() < minimum_center_height_) return 1;
 
   Eigen::Vector3i id;
   posToIndex(pos, id);

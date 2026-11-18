@@ -121,16 +121,15 @@ namespace ego_planner
     for (int i = 0; i < P.cols() - 1; ++i)
     {
       Eigen::VectorXd vel = p_ * (P.col(i + 1) - P.col(i)) / (u_(i + p_ + 1) - u_(i + 1));
-      if (fabs(vel(0)) > enlarged_vel_lim || fabs(vel(1)) > enlarged_vel_lim ||
-          fabs(vel(2)) > enlarged_vel_lim)
+      // Bound total speed: independent axis limits allow diagonal motion to
+      // exceed the configured cruise speed by up to sqrt(3).
+      const double speed = vel.norm();
+      if (speed > enlarged_vel_lim)
       {
         if (show)
           cout << "[Check]: Infeasible vel " << i << " :" << vel.transpose() << endl;
         fea = false;
-        for (int j = 0; j < dimension; ++j)
-        {
-          max_vel = max(max_vel, fabs(vel(j)));
-        }
+        max_vel = max(max_vel, speed);
       }
     }
     /* acc feasibility */

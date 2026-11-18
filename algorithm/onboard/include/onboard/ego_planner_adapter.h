@@ -30,6 +30,8 @@ namespace ego_onboard
     double max_descent_below_ref = 2.0;   // 允许低于高度基准的最大下探
     double map_margin_z = 2.0;            // 高度带外再留的余量
     double min_flight_height = 5.0;       // 最低飞行高度（相对起飞点）
+    bool use_fixed_virtual_floor = false; // false 保留旧的随参考高度计算地板方式
+    double virtual_floor_height = 2.0;   // 固定模式：膨胀后的最低可通行中心高度，相对 HOME
     Eigen::Vector2d map_size_xy = Eigen::Vector2d(60.0, 60.0); // 滚动窗口 x/y 尺寸
     double occupancy_update_range_xy = 9.0; // 只有机体附近的体素会被刷新
     double occupancy_update_range_z = 6.0;  // 同上，z 方向的刷新范围

@@ -274,19 +274,25 @@ namespace ego_planner
     /*** STEP 3: REFINE(RE-ALLOCATE TIME) IF NECESSARY ***/
     double ratio;
     bool flag_step_2_success = true;
-    if (!pos.checkFeasibility(ratio, false))
+    bool feasible = pos.checkFeasibility(ratio, false);
+    for (int attempt = 0; !feasible && attempt < 3; ++attempt)
     {
       std::cout << "[EgoLocalPlanner] Need to reallocate time." << std::endl;
 
       Eigen::MatrixXd optimal_control_points;
       flag_step_2_success = refineTrajAlgo(pos, start_end_derivatives, ratio, ts, optimal_control_points);
-      if (flag_step_2_success)
-        pos = UniformBspline(optimal_control_points, 3, ts);
+      if (!flag_step_2_success)
+        break;
+      pos = UniformBspline(optimal_control_points, 3, ts);
+      pos.setPhysicalLimits(cfg_.max_vel, cfg_.max_acc, cfg_.feasibility_tolerance);
+      // Refinement changes both the control points and timing. Do not publish
+      // it under the assumption that the pre-refinement limits still hold.
+      feasible = pos.checkFeasibility(ratio, false);
     }
 
-    if (!flag_step_2_success)
+    if (!flag_step_2_success || !feasible)
     {
-      std::cerr << "[EgoLocalPlanner] This refined trajectory hits obstacles. It doesn't matter if it appears occasionally." << std::endl;
+      std::cerr << "[EgoLocalPlanner] Refined trajectory failed collision or dynamic feasibility checks." << std::endl;
       continous_failures_count_++;
       return false;
     }

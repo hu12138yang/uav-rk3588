@@ -19,6 +19,7 @@ class LivoxSource {
     double frame_duration_s = 0.1;      // 约 100 ms/帧（10 Hz）
     double gap_factor = 2.0;            // 包间异常大缺口的判定系数，用于清理半帧
     double min_range_m = 0.1, max_range_m = 100.0; // 点云距离过滤
+    double planning_range_m = 40.0;     // 规划/制动距离预算，独立于截止量程；不改变点云过滤
     size_t queue_capacity = 3;          // 已组装帧的队列上限，满了丢最旧
   };
   // 运行统计与同步状态（主循环日志/健康判断用）

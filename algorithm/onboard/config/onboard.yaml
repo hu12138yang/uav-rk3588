@@ -5,8 +5,9 @@ lidar:
   point_data_type: 1         # 实测 Cartesian High，96 点 × 14 字节 + 36 字节头 = 1380
   frame_duration_s: 0.10     # 约 100 ms/帧，输出约 10 Hz
   gap_factor: 2.0            # 回跳/包间大缺口仍清理半帧
-  min_range_m: 0.10
-  max_range_m: 100.0
+  min_range_m: 1.24
+  max_range_m: 100.0        # 截止量程，仅用于点云过滤
+  planning_range_m: 40.0    # 10% 反射率典型量程，用于规划/制动预算；并非保证探测距离
   queue_capacity: 3
 
 # 飞控协议身份与链路
@@ -23,12 +24,12 @@ mission_input:
   file: "missions/mission.kml" # 相对启动工作目录；开机服务固定为项目根目录
   wait_for_file: true
   height_mode: constant
-  constant_alt_m: 50.0
+  constant_alt_m: 12.0       # 测试巡航参考高度，相对 HOME；按 10～15 m 范围取值
   max_bytes: 5242880
   max_waypoints: 2000
 mission:
   handover_position_tolerance_m: 5.0 # 起点水平误差超过此值不接管
-  handover_alt_tolerance_m: 0.8
+  handover_alt_tolerance_m: 0.5 # 参考高度 12 m，对应接管范围 11.5～12.5 m
   wp_reach_tol: 2.0
   pre_offboard_stream_s: 1.5
   use_planner: true
@@ -59,7 +60,7 @@ failsafe:
 
 # 输出形态
 output:
-  setpoint_hz: 50.0          # 20 m/s 时相邻设定点约 0.4 m
+  setpoint_hz: 50.0          # 5 m/s 时相邻设定点约 0.1 m
   velocity_feedforward: false # false = 只发位置+yaw（type_mask 0x09F8）
 
 # 机体
@@ -70,29 +71,28 @@ vehicle:
 # 地图
 map:
   resolution: 0.25
-  size_xy: [216.0, 216.0]    # 半宽 108 m 覆盖 12 m 滑窗偏移 + 90 m 入图及膨胀余量
+  size_xy: [108.0, 108.0]    # 半宽 54 m 覆盖 8 m 滑窗偏移 + 40 m 入图及膨胀余量
   altitude_band_half: 10.0   # 高度带向上半宽
-  max_descent_below_ref: 3.25 
-  map_margin_z: 3.25         
-  min_flight_height: 5.0     # 最低离地高度（相对起飞点）
-  update_range_xy: 90.0      # 覆盖 50 m 制动距离及感知/规划延迟；点云量程过滤仍为 100 m
+  virtual_floor_height: 2.0  # 膨胀后的最低可通行中心高度，相对 HOME；不随当前高度移动
+  map_margin_z: 3.25
+  update_range_xy: 40.0      # 按典型量程入图；不依赖 40～100 m 的远距回波完成制动
   update_range_z: 10.0
   obstacles_inflation: 2.75
   local_map_margin: 10
-  recenter_margin: 12.0      # 离窗口中心 12 m 滑动
+  recenter_margin: 8.0       # 离窗口中心 8 m 滑动
 
 # 规划器
 planner:
-  max_vel: 20.0             # m/s；同步传给局部目标、优化器和时间重分配
+  max_vel: 5.0              # m/s；当前巡航目标，需实机验证减速/延迟
   max_acc: 4.0
-  planning_horizon: 70.0    # m；4 m/s² 下从静止加速到 20 m/s 需要 50 m
-  local_target_step: 2.0     
+  planning_horizon: 7.5     # m；5 m/s、4 m/s² 下理想制动 3.125 m，含延迟及膨胀需 10.725 m
+  local_target_step: 0.5
   local_target_max_ratio: 1.5 
-  replan_period: 0.2         # 每个重规划周期前进约 4 m
+  replan_period: 0.2         # 每个重规划周期前进约 1 m
   goal_tolerance: 0.5
   obstacle_clearance: 0.5    
-  ctrl_pt_dist: 1.6          # 速度提高 4 倍，同步增大间距，避免控制点数量暴涨
-  time_forward: 0.25        # yaw 前视约 5 m，保持原 5 m/s × 1 s 的空间尺度
+  ctrl_pt_dist: 0.4          # 随速度减半，保持控制点时间尺度
+  time_forward: 1.0         # yaw 前视约 5 m
   astar_pool: [100, 100, 100] 
 
 # 外参：雷达 -> 机体

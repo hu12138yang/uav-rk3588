@@ -98,8 +98,9 @@ namespace ego_onboard
   {
     z_ref_ = z_ref;
 
-    // 高度带下界：基准 - 允许下降量
-    const double band_lo = std::max(z_ref - cfg_.max_descent_below_ref, cfg_.min_flight_height);
+    // 固定地板模式的下界表示膨胀后的机体中心最低高度；旧配置保留自动模式。
+    const double band_lo = cfg_.use_fixed_virtual_floor ? cfg_.virtual_floor_height :
+        std::max(z_ref - cfg_.max_descent_below_ref, cfg_.min_flight_height);
     const double band_hi = z_ref + cfg_.altitude_band_half;
 
     // 地图 z 窗口 = 高度带再外扩 margin
@@ -116,8 +117,13 @@ namespace ego_onboard
                        band_hi + cfg_.map_margin_z, // 天花板：交给 initMap 夹到地图顶
                        map_z_lo,                    // 地图底
                        cfg_.local_map_margin, "world");
-    // 虚拟地板 = 高度带下界：规划器不会规划到它下面
-    grid_map_->setVirtualGroundHeight(band_lo);
+    // GridMap fills ground_id..ground_id+inf_step inclusively. Place the
+    // backing plane below the desired free boundary by inflation plus one
+    // voxel, so a configured 2 m floor becomes free at 2 m, not at 5 m.
+    const double floor_padding = (std::ceil(cfg_.obstacles_inflation / cfg_.resolution) + 1.0) * cfg_.resolution;
+    grid_map_->setVirtualGroundHeight(cfg_.use_fixed_virtual_floor ? band_lo - floor_padding : band_lo);
+    if (cfg_.use_fixed_virtual_floor)
+      grid_map_->setMinimumCenterHeight(band_lo);
 
     ego_planner::EgoLocalPlannerConfig pcfg;
     pcfg.max_vel = cfg_.max_vel;
