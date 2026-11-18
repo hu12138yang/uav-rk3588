@@ -9,6 +9,7 @@
 //   100 Hz       ──step───────► 需要时重规划 ─► TrajectoryTracker ─► QuadrotorCommand
 
 #include <Eigen/Eigen>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -43,7 +44,8 @@ namespace ego_onboard
     bool strict_pose_coverage = false;    // true=每帧都必须有完整位姿覆盖，否则允许部分覆盖
 
     /* ---- 规划器 ---- */
-    double max_vel = 5.0;                 // 巡航速度，EGO 一直以它跑
+    double max_vel = 5.0;                 // EGO 轨迹速度上限
+    double local_target_speed = std::numeric_limits<double>::infinity(); // 未配置时使用 max_vel
     double max_acc = 6.0;
     double planning_horizon = 6.0;        // 局部目标前视距离
     double local_target_step = 1.0;       // 落点被占时沿航线前走的步长

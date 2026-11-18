@@ -83,7 +83,8 @@ map:
 
 # 规划器
 planner:
-  max_vel: 5.0              # m/s；当前巡航目标，需实机验证减速/延迟
+  max_vel: 5.0              # m/s；EGO 轨迹速度上限
+  local_target_speed: 3.0   # m/s；局部前视点的期望通过速度
   max_acc: 4.0
   planning_horizon: 7.5     # m；5 m/s、4 m/s² 下理想制动 3.125 m，含延迟及膨胀需 10.725 m
   local_target_step: 0.5

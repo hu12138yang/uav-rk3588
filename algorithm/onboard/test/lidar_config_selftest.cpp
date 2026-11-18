@@ -48,6 +48,9 @@ int main(int argc,char **argv) {
   root["lidar"]["planning_range_m"]=24.96;check(root,true);
   root=YAML::LoadFile(argv[1]);root["planner"]["max_vel"]=0;check(root,false);
   root=YAML::LoadFile(argv[1]);root["planner"]["max_vel"]=".nan";check(root,false);
+  root=YAML::LoadFile(argv[1]);root["planner"]["local_target_speed"]=0;check(root,false,"planner.local_target_speed");
+  root=YAML::LoadFile(argv[1]);root["planner"]["local_target_speed"]=".nan";check(root,false,"planner.local_target_speed");
+  root=YAML::LoadFile(argv[1]);root["planner"].remove("local_target_speed");check(root,true);
   root=YAML::LoadFile(argv[1]);root["planner"]["max_acc"]=0;check(root,false);
   root=YAML::LoadFile(argv[1]);root["planner"]["planning_horizon"]=1;check(root,false);
   root=YAML::LoadFile(argv[1]);root["map"]["update_range_xy"]=10;check(root,false,"map.update_range_xy must cover");

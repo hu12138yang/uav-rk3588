@@ -177,6 +177,12 @@ namespace ego_onboard
     if (const YAML::Node n = root["planner"])
     {
       get(n, "max_vel", out.adapter.max_vel);
+      if (n["local_target_speed"])
+      {
+        get(n, "local_target_speed", out.adapter.local_target_speed);
+        if (!std::isfinite(out.adapter.local_target_speed) || out.adapter.local_target_speed <= 0.0)
+          throw std::runtime_error("planner.local_target_speed must be finite and positive");
+      }
       get(n, "max_acc", out.adapter.max_acc);
       get(n, "planning_horizon", out.adapter.planning_horizon);
       get(n, "local_target_step", out.adapter.local_target_step);

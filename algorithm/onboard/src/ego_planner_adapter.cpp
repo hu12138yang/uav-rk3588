@@ -459,12 +459,12 @@ namespace ego_onboard
 
     if (need_plan)
     {
-      // 穿过局部前视点；最后航段按该点到终点的剩余距离连续减速。
-      // 20 m/s 时制动距离为 50 m，直接从 20 切到 0 会反复拉长旧轨迹。
+      // 前视点的期望通过速度独立于样条限速；最后航段继续按剩余距离减速。
+      const double pass_speed = std::min(cfg_.local_target_speed, cfg_.max_vel);
       const double remaining = std::max(0.0, leg_end_s_ - s_tgt);
       const double target_speed = leg_last_
-          ? std::min(cfg_.max_vel, std::sqrt(2.0 * cfg_.max_acc * remaining))
-          : cfg_.max_vel;
+          ? std::min(pass_speed, std::sqrt(2.0 * cfg_.max_acc * remaining))
+          : pass_speed;
       const Eigen::Vector3d local_target_vel = routeDirAt(s_tgt) * target_speed;
 
       // 起点状态：用上一次输出的速度/加速度（EGO 自己的输出 ≈ 实际状态，

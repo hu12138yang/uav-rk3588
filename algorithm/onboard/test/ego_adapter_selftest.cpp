@@ -7,6 +7,7 @@
 //   4) 绕开障碍后回到参考航线并到达本段终点；
 //   5) 位姿覆盖不足时整帧丢弃（绝不拿错位姿污染 insert-only 地图）。
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -285,7 +286,8 @@ int main(int argc, char **argv)
       fast.setLeg(position, destination, true);
       double peak_speed = 0, next_frame = 0;
       bool finite = true, collision_free = true;
-      const double simulation_limit_s = std::max(50.0, 2.0 * (destination-position).norm() / app.adapter.max_vel);
+      const double pass_speed = std::min(app.adapter.local_target_speed, app.adapter.max_vel);
+      const double simulation_limit_s = std::max(50.0, 2.0 * (destination-position).norm() / pass_speed);
       for (double t = 0; t < simulation_limit_s; t += 1.0 / app.pilot.setpoint_hz) {
         ego_sensor::TimedPose pose; pose.t = t; pose.p = position;
         fast.onPose(pose);
@@ -319,7 +321,7 @@ int main(int argc, char **argv)
                   app.adapter.max_vel, peak_speed, position.x(), position.y(), position.z(), fast.stats().replan,
                   fast.stats().plan_fail, fast.stats().plan_ms_max);
       check(finite && collision_free, "生产高速参数下指令有限且未进入膨胀障碍");
-      check(peak_speed >= app.adapter.max_vel * 0.9, "长航段实际生成接近配置速度上限的轨迹");
+      check(peak_speed >= pass_speed * 0.9, "长航段轨迹能达到接近期望通过速度");
       check(peak_speed <= app.adapter.max_vel * 1.05 + 0.01, "高速轨迹未超出规划器 5% 可行性容差");
       check((position - destination).norm() < 2, "高速轨迹绕障后抵达终点");
       check(fast.stats().recenter > 0, "高速长航段触发地图滑窗");
