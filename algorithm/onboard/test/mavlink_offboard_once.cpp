@@ -15,7 +15,7 @@ using ego_onboard::SerialPort;
 
 namespace {
 void usage() {
-  std::puts("mavlink_offboard_once --serial <device> [--baud <baud>] [--mode-only] [--v1]");
+  std::puts("mavlink_offboard_once --serial <device> [--baud <baud>] [--mode-only] (MAVLink v1)");
   std::puts("Default: arm once, wait for confirmation, then request OFFBOARD once.");
   std::puts("--mode-only: send one OFFBOARD request and, after confirmation, send static local-NED setpoints.");
   std::puts("Does not take off or send position setpoints.");
@@ -47,15 +47,13 @@ int main(int argc, char **argv) {
   std::string device;
   int baud = 921600;
   bool mode_only = false;
-  bool mavlink_v1 = true;
   try {
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       if (arg == "--serial" && i + 1 < argc) device = argv[++i];
       else if (arg == "--baud" && i + 1 < argc) baud = std::stoi(argv[++i]);
       else if (arg == "--mode-only") mode_only = true;
-      else if (arg == "--v1") mavlink_v1 = true;
-      else if (arg == "--v2") mavlink_v1 = false;
+      else if (arg == "--v1") continue;
       else if (arg == "--help" || arg == "-h") { usage(); return 0; }
       else throw std::runtime_error("invalid or incomplete option: " + arg);
     }
@@ -94,7 +92,7 @@ int main(int argc, char **argv) {
       uint8_t payload[ego_mav::CommandLong::LEN];
       command.encode(payload);
       const auto frame = ego_mav::pack(source_system, source_component, sequence, ego_mav::CommandLong::ID,
-                                       payload, sizeof(payload), !mavlink_v1);
+                                       payload, sizeof(payload));
       if (frame.empty() || !serial.write(frame.data(), frame.size()))
         throw std::runtime_error(std::string("failed to transmit ") + label);
       return frame.size();
@@ -110,7 +108,7 @@ int main(int argc, char **argv) {
       gcs_heartbeat.encode(heartbeat_payload);
       const auto heartbeat_frame = ego_mav::pack(source_system, source_component, 0,
                                                    ego_mav::Heartbeat::ID,
-                                                   heartbeat_payload, sizeof(heartbeat_payload), !mavlink_v1);
+                                                   heartbeat_payload, sizeof(heartbeat_payload));
       if (heartbeat_frame.empty() || !serial.write(heartbeat_frame.data(), heartbeat_frame.size()))
         throw std::runtime_error("failed to transmit GCS heartbeat");
       std::printf("[TX] sent GCS HEARTBEAT sysid=%u compid=%u bytes=%zu\n",
@@ -162,7 +160,7 @@ int main(int argc, char **argv) {
       uint8_t mode_payload[ego_mav::CommandLong::LEN];
       mode_command.encode(mode_payload);
       const auto frame_command = ego_mav::pack(source_system, source_component, 1, ego_mav::CommandLong::ID,
-                                                mode_payload, ego_mav::CommandLong::LEN, !mavlink_v1);
+                                                mode_payload, ego_mav::CommandLong::LEN);
       std::printf("[TX HEX]");
       for (uint8_t byte : frame_command) std::printf(" %02X", byte);
       std::putchar('\n');

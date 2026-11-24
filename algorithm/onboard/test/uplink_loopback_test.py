@@ -32,16 +32,20 @@ def check_observe_frames(wire):
     extras = {0: 50, 66: 148, 76: 152, 111: 34}
     ids = set()
     while wire:
-        assert wire[0] == 0xfd and len(wire) >= 12, wire.hex()
-        size = wire[1] + 12
+        assert wire[0] == 0xfe and len(wire) >= 8, wire.hex()
+        size = wire[1] + 8
         frame, wire = wire[:size], wire[size:]
         assert len(frame) == size
-        msgid = int.from_bytes(frame[7:10], 'little')
+        msgid = frame[5]
         assert msgid in extras, f'unexpected observe-only message {msgid}'
         assert crc16(frame[1:-2] + bytes([extras[msgid]])) == int.from_bytes(frame[-2:], 'little')
-        if msgid == 76:
-            payload = frame[10:-2].ljust(33, b'\0')
+        payload = frame[6:-2]
+        if msgid == 0:
+            assert len(payload) == 9 and payload[8] == 3
+        elif msgid == 76:
             assert struct.unpack_from('<H', payload, 28)[0] == 512  # HOME query only
+        elif msgid == 111:
+            assert len(payload) == 16
         ids.add(msgid)
     assert {0, 66, 111} <= ids, ids
 

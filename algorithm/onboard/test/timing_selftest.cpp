@@ -132,7 +132,6 @@ int main() {
     for(const auto &wire:requests)for(auto byte:wire){MavMessage message;if(request_parser.push(byte,message)&&message.msgid==111){
       Timesync reply;Timesync::decode(message.payload.data(),message.payload.size(),reply);
       reply.tc1=int64_t((sent+.002-42)*1e9);
-      reply.target_system=live_config.sysid;reply.target_component=live_config.compid;
       uint8_t payload[Timesync::LEN]{};
       reply.encode(payload);feed(live,sent+.004,111,payload,sizeof(payload));
     }}

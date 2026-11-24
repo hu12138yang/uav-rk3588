@@ -119,7 +119,7 @@ namespace ego_onboard
       double pre_offboard_stream_s = 1.5; // 切 Offboard 前连续预发 setpoint 的时长
       // 任务
       double cruise_alt_m = 50.0; // 仅用于地面站起飞后接管的高度检查
-      double handover_alt_tolerance_m = 1.0;      // 接管高度允许误差
+      double handover_alt_tolerance_m = 2.0;      // 接管高度允许误差
       double handover_position_tolerance_m = 5.0; // 接管水平位置允许误差
       double handover_stable_s = 1.5;             // 高度/位置和悬停速度连续满足的时间
       double handover_max_speed_mps = 0.3;        // 认为已悬停的最大三维速度
@@ -231,11 +231,11 @@ namespace ego_onboard
 
     // 发送辅助
     template <typename Msg>
-    void send(const Msg &m, std::vector<std::vector<uint8_t>> &out, bool mavlink_v2 = false)
+    void send(const Msg &m, std::vector<std::vector<uint8_t>> &out)
     {
       uint8_t buf[255];
       m.encode(buf);
-      auto f = pack(cfg_.sysid, cfg_.compid, seq_++, Msg::ID, buf, Msg::LEN, mavlink_v2);
+      auto f = pack(cfg_.sysid, cfg_.compid, seq_++, Msg::ID, buf, Msg::LEN);
       if (!f.empty())
         out.push_back(std::move(f));
     }

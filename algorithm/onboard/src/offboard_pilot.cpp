@@ -124,8 +124,8 @@ namespace ego_onboard
             (!m.target_component || m.target_component == cfg_.compid)) {
           if (m.tc1 > 0) alignment_.accept(m.tc1, m.ts1, t_now_);
           else if (m.tc1 == 0) {
-            m.tc1 = int64_t(t_now_ * 1e9); m.target_system = cfg_.target_system;
-            m.target_component = cfg_.target_component; send(m, outbox_);
+            m.tc1 = int64_t(t_now_ * 1e9);
+            send(m, outbox_);
           }
         }
         break;
@@ -336,8 +336,8 @@ namespace ego_onboard
       sendHeartbeat(out, now);
 
     if (now - t_last_sync_request_ >= 0.2) {
-      Timesync m; m.ts1 = alignment_.request(now); m.target_system = cfg_.target_system;
-      m.target_component = cfg_.target_component; send(m, out); t_last_sync_request_ = now;
+      Timesync m; m.ts1 = alignment_.request(now);
+      send(m, out); t_last_sync_request_ = now;
     }
     if (!origin_.valid && now - t_last_home_request_ >= 2.0) {
       CommandLong request; request.command=512; request.target_system=cfg_.target_system;
@@ -399,7 +399,7 @@ namespace ego_onboard
     if (phase_ == Phase::IDLE || phase_ == Phase::FAILED)
       return;
 
-    if ((phase_ == Phase::PRE_OFFBOARD || active) && now - t_last_setpoint_ < 1.0 / cfg_.setpoint_hz) return;
+    if (active && now - t_last_setpoint_ < 1.0 / cfg_.setpoint_hz) return;
     switch (phase_)
     {
     // ---------------------------------------------------------- S0 链路
@@ -461,14 +461,18 @@ namespace ego_onboard
     // ------------------------------- S4 先连发 setpoint，再切 Offboard
     case Phase::PRE_OFFBOARD:
     {
-      if (!pose_ok || !timing_ok || !sensing_healthy_ || !gps_ok || !armed_ || (main_mode_ != MODE_POS_HOLD && main_mode_ != MODE_OFFBOARD))
+      const bool outside_handover_window = !mode_switch_sent_ && !handoverDiagnostics(now).altitude_ok;
+      if (!all_clear || !armed_ || outside_handover_window ||
+          (main_mode_ != MODE_POS_HOLD && main_mode_ != MODE_OFFBOARD))
       {
-        // Do not override GCS landing / RTL / disarm during handover.
+        // Restart the hover check if the aircraft leaves the height window before the request.
         phase_ = Phase::WAIT_GROUND_START;
+        t_phase_ = now;
         mode_switch_sent_ = false;
         waiting_offboard_ = false;
         break;
       }
+      if (now - t_last_setpoint_ < 1.0 / cfg_.setpoint_hz) break;
       // 从当前位姿起步（速度/加速度为 0），避免切模式瞬间位置跳变
       ego_planner::QuadrotorCommand cmd;
       cmd.position = pos_enu_;

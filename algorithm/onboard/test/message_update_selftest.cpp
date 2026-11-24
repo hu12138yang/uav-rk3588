@@ -33,8 +33,17 @@ void append(std::vector<uint8_t> &stream, const std::vector<uint8_t> &frame) {
 void feed(OffboardPilot &pilot, double now, const std::vector<uint8_t> &frame) {
   pilot.setReceiveTime(now); pilot.onMavlinkBytes(frame.data(), frame.size());
 }
-void synchronize(OffboardPilot &pilot) {
+void replyTimesync(OffboardPilot &pilot, double sent, const MavMessage &message) {
+  Timesync request;
+  if (message.msgid != Timesync::ID ||
+      !Timesync::decode(message.payload.data(), message.payload.size(), request) || request.tc1 != 0) return;
   constexpr double offset = 9.1;
+  request.tc1 = int64_t((sent + 0.002 - offset) * 1e9);
+  uint8_t payload[Timesync::LEN]{};
+  request.encode(payload);
+  feed(pilot, sent + 0.004, pack(1, 1, 0, Timesync::ID, payload, sizeof(payload)));
+}
+void synchronize(OffboardPilot &pilot) {
   for (int i=0; i<10; ++i) {
     const double sent = 10.0 + i * 0.21;
     std::vector<std::vector<uint8_t>> requests;
@@ -42,18 +51,73 @@ void synchronize(OffboardPilot &pilot) {
     Parser parser;
     for (const auto &wire : requests) for (auto byte : wire) {
       MavMessage message;
-      if (!parser.push(byte, message) || message.msgid != Timesync::ID) continue;
-      Timesync request;
-      if (!Timesync::decode(message.payload.data(), message.payload.size(), request) || request.tc1 != 0) continue;
-      request.tc1 = int64_t((sent + 0.002 - offset) * 1e9);
-      request.target_system = 245;
-      request.target_component = 1;
-      uint8_t payload[Timesync::LEN]{};
-      request.encode(payload);
-      feed(pilot, sent + 0.004, pack(1, 1, 0, Timesync::ID, payload, sizeof(payload)));
-      break;
+      if (parser.push(byte, message)) replyTimesync(pilot, sent, message);
     }
   }
+}
+void checkHandover(const std::vector<uint8_t> &home) {
+  OffboardPilot pilot;
+  OffboardPilot::Config config;
+  config.cruise_alt_m = 5.0;
+  config.gps_min_fix = 6;
+  pilot.setConfig(config);
+  pilot.setInputReady(true);
+  pilot.start({{21, 113, 5}, {21, 113.0001, 5}});
+  synchronize(pilot);
+  double now = 12.0;
+  feed(pilot, now, home);
+  struct Output { bool setpoint = false; bool offboard_request = false; };
+  auto advance = [&](int32_t height_mm, int ticks, uint8_t mode = MODE_POS_HOLD) {
+    Output output;
+    Heartbeat heartbeat; heartbeat.type = 2; heartbeat.autopilot = 12;
+    heartbeat.custom_mode = uint32_t(mode) << 16;
+    uint8_t hb[Heartbeat::LEN]{}; heartbeat.encode(hb);
+    uint8_t gps[30]{}; gps[28] = 6;
+    for (int i = 0; i < ticks; ++i, now += 0.125) {
+      const auto boot = pilot.timeAlignment().bootMs(now - 0.010);
+      feed(pilot, now, pack(1, 1, 0, Heartbeat::ID, hb, sizeof(hb)));
+      feed(pilot, now, pack(1, 1, 0, GpsRawInt::ID, gps, sizeof(gps)));
+      feed(pilot, now, position(boot, height_mm));
+      feed(pilot, now, attitude(boot));
+      std::vector<std::vector<uint8_t>> tx;
+      pilot.tick(now, tx);
+      Parser parser;
+      for (const auto &frame : tx) for (auto byte : frame) {
+        MavMessage message;
+        if (!parser.push(byte, message)) continue;
+        replyTimesync(pilot, now, message);
+        if (message.msgid == SetPositionTargetLocalNed::ID) output.setpoint = true;
+        if (message.msgid == CommandLong::ID && message.payload.size() >= 30 &&
+            rdU16(message.payload.data(), 28) == CMD_DO_SET_MODE &&
+            rdF32(message.payload.data(), 4) == MODE_OFFBOARD) output.offboard_request = true;
+      }
+    }
+    return output;
+  };
+  const auto takeoff = advance(5000, 14, MODE_AUTO);
+  const auto below = advance(2999, 14);
+  const auto above = advance(7001, 14);
+  check(!takeoff.setpoint && !takeoff.offboard_request && !below.setpoint && !below.offboard_request &&
+        !above.setpoint && !above.offboard_request && pilot.phase() == Phase::WAIT_GROUND_START,
+        "takeoff mode and heights outside the 3–7 m window block handover");
+  const auto early = advance(3000, 12);
+  check(!early.setpoint && !early.offboard_request && pilot.phase() == Phase::WAIT_GROUND_START,
+        "no setpoint is sent before 1.5 seconds of qualifying hover");
+  const auto lower = advance(3000, 2);
+  check(lower.setpoint && !lower.offboard_request && pilot.phase() == Phase::PRE_OFFBOARD,
+        "the inclusive lower boundary can start the pre-Offboard stream");
+  const auto drift = advance(2999, 16);
+  check(!drift.setpoint && !drift.offboard_request && pilot.phase() == Phase::WAIT_GROUND_START,
+        "leaving the window during pre-stream cancels it before the mode request");
+  const auto upper_hover = advance(7000, 13);
+  check(!upper_hover.setpoint && !upper_hover.offboard_request && pilot.phase() == Phase::PRE_OFFBOARD,
+        "a fresh 1.5 second hover at the inclusive upper boundary qualifies for pre-stream");
+  const auto upper_stream = advance(7000, 11);
+  check(upper_stream.setpoint && !upper_stream.offboard_request,
+        "the renewed pre-stream sends setpoints before requesting Offboard");
+  check(advance(7000, 1).offboard_request, "Offboard is requested after the full pre-stream at the upper boundary");
+  advance(7000, 1, MODE_OFFBOARD);
+  check(pilot.phase() == Phase::OFFBOARD_CRUISE, "the FCU Offboard heartbeat confirms takeover");
 }
 }
 int main() {
@@ -66,7 +130,15 @@ int main() {
   synchronize(pilot);
   check(pilot.clockReady(13.0), "FCU TIMESYNC is established before consuming telemetry");
   uint8_t home[60]{}; wrI32(home, 0, 210000000); wrI32(home, 4, 1130000000);
-  feed(pilot, 13.0, pack(1, 1, 0, 242, home, sizeof(home)));
+  const auto home_frame = pack(1, 1, 0, HomePosition::ID, home, sizeof(home));
+  feed(pilot, 13.0, home_frame);
+  // CRC-valid v2 OFFBOARD heartbeats, with and without a signature trailer.
+  const std::vector<uint8_t> v2_heartbeats{
+      0xfd, 9, 0, 0, 0xfe, 1, 1, 0, 0, 0, 0, 0, 6, 0, 2, 12, 192, 4, 3, 0xd7, 0xaf,
+      0xfd, 9, 1, 0, 0xfe, 1, 1, 0, 0, 0, 0, 0, 6, 0, 2, 12, 192, 4, 3, 0x30, 0x57,
+      0xfe, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  feed(pilot, 13.0, v2_heartbeats);
+  check(!pilot.armed() && pilot.mainMode() == 0, "v2 frames do not update the FCU state on the v1 link");
   std::vector<uint8_t> stream;
   for (uint32_t i=0; i<100; ++i) {
     append(stream, position(3000+i*10, 50000+int32_t(i)*10));
@@ -114,6 +186,7 @@ int main() {
   check(poses.poseAt(3, out) && out.p.x()==3, "older pose insertion does not replace the newest history entry");
   pose.t=3; pose.p.x()=4; poses.add(pose);
   check(poses.poseAt(3, out) && out.p.x()==4, "same-time pose correction deliberately replaces its matching history entry");
+  checkHandover(home_frame);
   std::printf("message_update_selftest: %d failures\n", failures);
   return failures ? 1 : 0;
 }

@@ -222,17 +222,17 @@ int main(int argc, char **argv)
       auto map = production.gridMap();
       check(map->getInflateOccupancy(pose.p) == 0, "增大膨胀后巡航高度不被虚拟地板封住");
       const double floor = live.virtual_floor_height;
-      check(live.use_fixed_virtual_floor && std::abs(floor-2.0)<1e-9 &&
+      check(live.use_fixed_virtual_floor && std::abs(floor-3.0)<1e-9 &&
             map->getInflateOccupancy(Eigen::Vector3d(0,0,floor-0.001)) == 1 &&
             map->getInflateOccupancy(Eigen::Vector3d(0,0,floor)) == 0,
-            "固定地板膨胀后低于 2 m 被占用，2 m 开始可通行");
+            "固定地板膨胀后低于 3 m 被占用，3 m 开始可通行");
       bool handover_free = true;
       for (double offset : {-app.pilot.handover_alt_tolerance_m,0.0,app.pilot.handover_alt_tolerance_m})
         handover_free = handover_free && map->getInflateOccupancy(Eigen::Vector3d(0,0,altitude+offset)) == 0;
-      check(handover_free, "11.5～12.5 m 接管范围全部位于地板上方的自由层");
+      check(handover_free, "接管窗口的上下边界和中心高度均可通行");
       check(map->getInflateOccupancy(Eigen::Vector3d(30,30,floor-0.001)) == 1 &&
             map->getInflateOccupancy(Eigen::Vector3d(30,30,floor)) == 0,
-            "未写入局部点云的地图区域也不能规划到 2 m 以下");
+            "未写入局部点云的地图区域也不能规划到 3 m 以下");
       check(map->getInflateOccupancy(Eigen::Vector3d(0,0,altitude+10)) == 0 &&
             map->getInflateOccupancy(Eigen::Vector3d(0,0,altitude+10.3)) == 1,
             "虚拟顶板保持原有抬升边界");

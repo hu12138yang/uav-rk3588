@@ -134,7 +134,6 @@ int main(int argc, char **argv) {
         Timesync sync;
         if (Timesync::decode(message.payload.data(),message.payload.size(),sync) && sync.tc1 == 0) {
           sync.tc1 = int64_t((double(sync.ts1)*1e-9 - boot_origin)*1e9);
-          sync.target_system = 245; sync.target_component = 1;
           uint8_t p[Timesync::LEN]{}; sync.encode(p);
           feed(pilot,now,Timesync::ID,p,sizeof(p));
         }
@@ -143,7 +142,7 @@ int main(int argc, char **argv) {
         padPayload(message.payload.data(),message.payload.size(),p,sizeof(p));
         if (rdU16(p,28) == CMD_DO_SET_MODE && rdF32(p,4) == MODE_OFFBOARD) {
           mode = MODE_OFFBOARD;
-          uint8_t ack[CommandAck::LEN]{};
+          uint8_t ack[3]{};
           wrU16(ack,0,CMD_DO_SET_MODE);
           ack[2] = 0;
           feed(pilot,now,CommandAck::ID,ack,sizeof(ack));

@@ -29,11 +29,11 @@ mission_input:
   max_waypoints: 2000
 mission:
   handover_position_tolerance_m: 8.0 # 起点水平误差超过此值不接管
-  handover_alt_tolerance_m: 0.5 # 接管高度范围为巡航高度 ±0.5 m
-  handover_stable_s: 1.5       # RTK/位置/高度/定点和低速连续满足后才接管
+  handover_alt_tolerance_m: 2.0 # 起飞点预定高度的 ±2 m（含边界）
+  handover_stable_s: 1.5       # 定点低速且满足接管条件的连续时长
   handover_max_speed_mps: 0.3  # 三维速度低于此值才认为悬停稳定
   wp_reach_tol: 2.0
-  pre_offboard_stream_s: 1.5
+  pre_offboard_stream_s: 1.5  # 稳定悬停后预发 setpoint，再请求切换
   use_planner: true
 
 # 报文提频（协议 2.5.1，req_stream_id = 报文 ID）

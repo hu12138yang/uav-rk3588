@@ -16,7 +16,7 @@ using ego_onboard::SerialPort;
 namespace {
 void usage() {
   std::puts("mavlink_rx_test --serial <device> [--baud <baud>] [--duration <seconds>]");
-  std::puts("Receive-only; sends no MAVLink packets. Default baud=921600 duration=10s.");
+  std::puts("Receive-only MAVLink v1. Default baud=921600 duration=10s.");
 }
 }
 

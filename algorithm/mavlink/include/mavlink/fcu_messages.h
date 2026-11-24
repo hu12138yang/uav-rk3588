@@ -344,24 +344,26 @@ namespace ego_mav
     FRAME_GLOBAL_RELATIVE_ALT = 3,   // 相对起飞点高度 ← 航线用这个
   };
 
-  // ID=0 HEARTBEAT，载荷 9，CRC_EXTRA=50（双向）
+  // ID=111 TIMESYNC，MAVLink v1 载荷 16，CRC_EXTRA=34（双向）
   struct Timesync {
     static constexpr uint32_t ID = 111;
-    static constexpr size_t LEN = 18;
+    static constexpr size_t LEN = 16;
     int64_t tc1 = 0, ts1 = 0;
     uint8_t target_system = 0, target_component = 0;
     void encode(uint8_t *p) const {
       wrU64(p, 0, (uint64_t)tc1); wrU64(p, 8, (uint64_t)ts1);
-      p[16] = target_system; p[17] = target_component;
     }
     static bool decode(const uint8_t *p, size_t len, Timesync &m) {
-      if (!len) return false;
-      uint8_t b[LEN]; padPayload(p, len, b, LEN);
-      m.tc1 = (int64_t)rdU64(b, 0); m.ts1 = (int64_t)rdU64(b, 8);
-      m.target_system = b[16]; m.target_component = b[17]; return true;
+      if (len < LEN) return false;
+      m.tc1 = (int64_t)rdU64(p, 0); m.ts1 = (int64_t)rdU64(p, 8);
+      // 接收时兼容附带目标地址的历史报文。
+      m.target_system = len > LEN ? p[LEN] : 0;
+      m.target_component = len > LEN + 1 ? p[LEN + 1] : 0;
+      return true;
     }
   };
 
+  // ID=0 HEARTBEAT，载荷 9，CRC_EXTRA=50（双向）
   struct Heartbeat
   {
     static constexpr uint32_t ID = 0;
@@ -373,7 +375,7 @@ namespace ego_mav
     uint8_t autopilot = 8;        // MAV_AUTOPILOT_INVALID
     uint8_t base_mode = 192;      // MAV_MODE_MANUAL_ARMED
     uint8_t system_status = 4;    // MAV_STATE_ACTIVE
-    uint8_t mavlink_version = 2;
+    uint8_t mavlink_version = 3; // HEARTBEAT 报文定义中的版本字段
 
     bool armed() const { return (base_mode & 0x80) == 0x80; }
     // custom_mode 第 3 字节=主模式，第 4 字节=细分模式（协议 2.5.2）

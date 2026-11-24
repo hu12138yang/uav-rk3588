@@ -1,7 +1,7 @@
 #ifndef _MAVLINK_MAVLINK_CODEC_H_
 #define _MAVLINK_MAVLINK_CODEC_H_
 
-// MAVLink v1/v2 帧编解码 + CRC-16/MCRF4XX。
+// MAVLink v1 帧编解码 + CRC-16/MCRF4XX。
 // 只做收发，不做语义 —— 语义在 fcu_interface.h。
 
 #include <cstdint>
@@ -70,9 +70,6 @@ namespace ego_mav
     case 243: extra = 85;  return true; // SET_HOME_POSITION
     case 245: extra = 130; return true; // EXTENDED_SYS_STATE
     case 253: extra = 83;  return true; // STATUSTEXT
-    case 330: extra = 23;  return true; // OBSTACLE_DISTANCE    （官方 23）
-    case 500: extra = 243; return true; // COMPONENT_EXTENSION43
-    case 602: extra = 159; return true; // BATTERY_STATUS_ACFLY
     default:  extra = 0;   return false;
     }
   }
@@ -80,52 +77,24 @@ namespace ego_mav
   struct MavMessage
   {
     uint8_t sysid = 0, compid = 0, seq = 0;
-    uint8_t incompat_flags = 0;
     uint32_t msgid = 0;
     std::vector<uint8_t> payload;
     bool crc_checked = false; // 表内报文才做校验
   };
 
-  // 默认使用飞控兼容的 MAVLink v1；解析器仍同时兼容 v1/v2 下行帧。
   inline std::vector<uint8_t> pack(uint8_t sysid, uint8_t compid, uint8_t seq, uint32_t msgid,
-                                   const uint8_t *payload, size_t len, bool v2 = false, bool signed_frame = false)
+                                   const uint8_t *payload, size_t len)
   {
-    std::vector<uint8_t> f;
     uint8_t extra = 0;
-    const bool known = crcExtra(msgid, extra);
-    if (!known)
-      return f; // 不认识的报文不发
-
-    if (v2)
-    {
-      f.push_back(0xFD);
-      f.push_back((uint8_t)len);
-      f.push_back(signed_frame ? 0x01 : 0x00); // incompat_flags
-      f.push_back(0x00);                       // compat_flags
-      f.push_back(seq);
-      f.push_back(sysid);
-      f.push_back(compid);
-      f.push_back((uint8_t)(msgid & 0xFF));
-      f.push_back((uint8_t)((msgid >> 8) & 0xFF));
-      f.push_back((uint8_t)((msgid >> 16) & 0xFF));
-    }
-    else
-    {
-      if (msgid > 255)
-        return f; // v1 只有 8 位 msgid
-      f.push_back(0xFE);
-      f.push_back((uint8_t)len);
-      f.push_back(seq);
-      f.push_back(sysid);
-      f.push_back(compid);
-      f.push_back((uint8_t)msgid);
-    }
-
-    const size_t hdr = v2 ? 10 : 6;
+    if (msgid > 255 || len > 255 || !crcExtra(msgid, extra))
+      return {};
+    std::vector<uint8_t> f;
+    f.reserve(8 + len);
+    f.insert(f.end(), {0xFE, uint8_t(len), seq, sysid, compid, uint8_t(msgid)});
     f.insert(f.end(), payload, payload + len);
 
     uint16_t crc = 0xFFFF;
-    for (size_t i = 1; i < hdr + len; ++i)
+    for (size_t i = 1; i < f.size(); ++i)
       crcAccumulate(f[i], crc);
     crcAccumulate(extra, crc);
     f.push_back((uint8_t)(crc & 0xFF));
@@ -160,22 +129,27 @@ namespace ego_mav
       if (len_ < 3)
         return false;
 
-      const bool v2 = (buf_[0] == 0xFD);
-      const size_t hdr = v2 ? 10 : 6;
+      // 丢弃完整的 v2 帧，避免把其中的 0xFE 误作 v1 帧头。
+      if (buf_[0] == 0xFD)
+      {
+        const size_t total = 12 + buf_[1] + ((buf_[2] & 0x01) ? 13 : 0);
+        if (len_ >= total)
+        {
+          std::memmove(buf_, buf_ + total, len_ - total);
+          len_ -= total;
+        }
+        return false;
+      }
+
+      constexpr size_t hdr = 6;
       if (len_ < hdr)
         return false;
       const size_t plen = buf_[1];
-      size_t total = hdr + plen + 2;
-      if (v2 && (buf_[2] & 0x01))
-        total += 13; // 带签名
+      const size_t total = hdr + plen + 2;
       if (len_ < total)
         return false;
 
-      uint32_t msgid;
-      if (v2)
-        msgid = (uint32_t)buf_[7] | ((uint32_t)buf_[8] << 8) | ((uint32_t)buf_[9] << 16);
-      else
-        msgid = buf_[5];
+      const uint8_t msgid = buf_[5];
 
       uint8_t extra = 0;
       const bool known = crcExtra(msgid, extra);
@@ -202,10 +176,9 @@ namespace ego_mav
         }
       }
 
-      out.sysid = v2 ? buf_[5] : buf_[3];
-      out.compid = v2 ? buf_[6] : buf_[4];
-      out.seq = v2 ? buf_[4] : buf_[2];
-      out.incompat_flags = v2 ? buf_[2] : 0;
+      out.sysid = buf_[3];
+      out.compid = buf_[4];
+      out.seq = buf_[2];
       out.msgid = msgid;
       out.crc_checked = known;
       out.payload.assign(buf_ + hdr, buf_ + hdr + plen);
