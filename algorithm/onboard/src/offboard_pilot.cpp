@@ -70,6 +70,10 @@ namespace ego_onboard
     planner_setpoints_ = cruise_hold_setpoints_ = 0;
     mode_switch_sent_ = false;
     waiting_offboard_ = false;
+    mode_ack_seen_ = false;
+    mode_ack_result_ = 255;
+    t_last_mode_ack_ = -1e9;
+    t_handover_candidate_ = -1e9;
     err_.clear();
     phase_ = Phase::LINK;
     t_start_ = -1.0;
@@ -261,7 +265,10 @@ namespace ego_onboard
   {
     // Only Offboard mode switching is owned by this controller. Ignore ACKs
     // for arm/takeoff/landing commands sent by the independent ground station.
-    (void)ack;
+    if (ack.command != CMD_DO_SET_MODE || !mode_switch_sent_) return;
+    mode_ack_seen_ = true;
+    mode_ack_result_ = ack.result;
+    t_last_mode_ack_ = t_now_;
   }
 
   void OffboardPilot::sendHeartbeat(std::vector<std::vector<uint8_t>> &out, double now)
@@ -269,6 +276,47 @@ namespace ego_onboard
     Heartbeat hb; // 默认即 GCS 心跳：type=6 autopilot=8 base_mode=192 status=4
     send(hb, out);
     t_last_hb_ = now;
+  }
+
+  HandoverDiagnostics OffboardPilot::handoverDiagnostics(double now) const
+  {
+    HandoverDiagnostics d;
+    d.fc_alive = t_last_fc_hb_ > -1e8 && now - t_last_fc_hb_ < cfg_.link_timeout;
+    d.armed = armed_;
+    d.main_mode = main_mode_;
+    d.sub_mode = sub_mode_;
+    d.pose_ok = poseFresh(now);
+    d.timing_ok = clockReady(now) && input_ready_;
+    d.sensing_ok = sensing_healthy_;
+    d.gps_rx = t_last_gps_ > -1e8 && now - t_last_gps_ <= cfg_.gps_rx_timeout_s;
+    d.gps_fix_type = gps_fix_type_;
+    d.gps_ok = !cfg_.gps_failsafe || (d.gps_rx && gps_fix_type_ >= cfg_.gps_min_fix);
+    d.route_valid = !route_enu_.empty();
+    d.altitude_rel_m = pos_enu_.z();
+    d.speed_mps = pose_asm_.velocityEnu().norm();
+    d.phase_elapsed_s = std::max(0.0, now - t_phase_);
+    d.ready_stable_s = t_handover_candidate_ < -1e8 ? 0.0 :
+        std::max(0.0, now - t_handover_candidate_);
+    d.mode_switch_sent = mode_switch_sent_;
+    d.waiting_offboard = waiting_offboard_;
+    d.mode_ack_seen = mode_ack_seen_;
+    d.mode_ack_result = mode_ack_result_;
+    if (mode_ack_seen_)
+      d.mode_ack_age_s = std::max(0.0, now - t_last_mode_ack_);
+
+    if (d.route_valid)
+    {
+      d.horizontal_error_m =
+          (pos_enu_.head<2>() - route_enu_.front().head<2>()).norm();
+      d.horizontal_position_ok = d.horizontal_error_m <= cfg_.handover_position_tolerance_m;
+      d.altitude_ok = std::abs(d.altitude_rel_m - cfg_.cruise_alt_m) <=
+          cfg_.handover_alt_tolerance_m;
+    }
+    d.speed_ok = d.speed_mps <= cfg_.handover_max_speed_mps;
+    d.ready = d.fc_alive && d.armed && d.pose_ok && d.timing_ok && d.sensing_ok &&
+        d.gps_ok && d.main_mode == MODE_POS_HOLD && d.horizontal_position_ok &&
+        d.altitude_ok && d.speed_ok;
+    return d;
   }
 
   // ---------------------------------------------------------------- 周期
@@ -394,15 +442,19 @@ namespace ego_onboard
     // GCS starts flight; onboard only observes and waits for stable POS_HOLD.
     case Phase::WAIT_GROUND_START:
     {
-      const bool fc_alive = now - t_last_fc_hb_ < cfg_.link_timeout;
-      if (fc_alive && armed_ && pose_ok && timing_ok && sensing_healthy_ && gps_ok && main_mode_ == MODE_POS_HOLD &&
-          !route_enu_.empty() && (pos_enu_.head<2>()-route_enu_.front().head<2>()).norm() <= cfg_.handover_position_tolerance_m &&
-          std::abs(pos_enu_.z() - cfg_.cruise_alt_m) <= cfg_.handover_alt_tolerance_m)
+      const auto handover = handoverDiagnostics(now);
+      if (handover.ready)
       {
-        phase_ = Phase::PRE_OFFBOARD;
-        t_phase_ = now;
-        mode_switch_sent_ = false;
+        if (t_handover_candidate_ < -1e8) t_handover_candidate_ = now;
+        if (now - t_handover_candidate_ >= cfg_.handover_stable_s)
+        {
+          phase_ = Phase::PRE_OFFBOARD;
+          t_phase_ = now;
+          t_handover_candidate_ = -1e9;
+          mode_switch_sent_ = false;
+        }
       }
+      else t_handover_candidate_ = -1e9;
       break;
     }
 
@@ -440,6 +492,9 @@ namespace ego_onboard
         last_cmd_ = CMD_DO_SET_MODE;
         mode_switch_sent_ = true;
         waiting_offboard_ = true;
+        mode_ack_seen_ = false;
+        mode_ack_result_ = 255;
+        t_last_mode_ack_ = -1e9;
       }
       if (waiting_offboard_ && main_mode_ == MODE_OFFBOARD)
       {

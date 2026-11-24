@@ -24,6 +24,7 @@ void usage() {
     "onboard_main --serial <device|tcp://host:port> --config <yaml> [--baud 921600]\n"
     "             [--livox-config <sdk.json> --lidar-ip <ip>] [--record-dir <directory>]\n"
     "             [--duration <seconds>] [--enable-control --kml <path>] [--uplink <ip:port>]\n"
+    "Record directories include handover.csv and raw fcu_rx.bin/fcu_tx.bin MAVLink streams with chunk indexes.\n"
     "             [--no-wait-kml] (observe-only diagnostics; skip the default inbox)\n"
     "             [--diagnose-zero-point-crc] (observe-only raw inspection; no trusted mapping)\n"
     "Waits for one stable valid KML at the configured path, then starts automatically.\n"
@@ -116,16 +117,28 @@ int main(int argc,char **argv) {
       throw std::runtime_error("physical RTK control requires min_fix=6, GPS/sensing failsafes, and EGO planner");
     app.pilot.observe_only=!control;
     app.adapter.strict_pose_coverage=true;
-    std::ofstream diag,frame_log,raw_rx,raw_tx,rx_chunks;
-    uint64_t rx_offset=0;
+    std::ofstream diag,frame_log,handover_log,raw_rx,raw_tx,rx_chunks,tx_chunks;
+    uint64_t rx_offset=0,tx_offset=0;
     if(!record.empty()) {
       if(::mkdir(record.c_str(),0755)!=0&&errno!=EEXIST) throw std::runtime_error("cannot create record directory");
-      if(!control&&!lidar_only) { raw_rx.open(record+"/fcu_rx.bin",std::ios::binary); raw_tx.open(record+"/fcu_tx.bin",std::ios::binary); rx_chunks.open(record+"/fcu_rx_chunks.csv"); rx_chunks<<"host_monotonic,offset,size\n"; }
-      if(!control&&!lidar_only&&(!raw_rx||!raw_tx||!rx_chunks)) throw std::runtime_error("cannot open raw serial diagnostic logs");
+      if(!lidar_only) {
+        raw_rx.open(record+"/fcu_rx.bin",std::ios::binary);
+        raw_tx.open(record+"/fcu_tx.bin",std::ios::binary);
+        rx_chunks.open(record+"/fcu_rx_chunks.csv");
+        tx_chunks.open(record+"/fcu_tx_chunks.csv");
+      }
+      if(!lidar_only&&(!raw_rx||!raw_tx||!rx_chunks||!tx_chunks))
+        throw std::runtime_error("cannot open raw MAVLink diagnostic logs");
       diag.open(record+"/timing.csv"); frame_log.open(record+"/scans.csv");
-      if(!diag||!frame_log) throw std::runtime_error("cannot open diagnostic logs");
+      handover_log.open(record+"/handover.csv");
+      if(!diag||!frame_log||!handover_log) throw std::runtime_error("cannot open diagnostic logs");
       diag<<"elapsed,phase,gps_fix,clock_ok,sync_samples,rtt_ms,residual_ms,lidar_packets,time_type,aligned_frames,rejected_frames,map_frames,pose_fresh,max_loop_ms,crc_errors,ptp_ready,lidar_sync_offset_ns,lidar_crc_missing,kml_ready,planner_steps\n";
       frame_log<<"raw_epoch,host_monotonic,receive_monotonic,time_type,points,span_s,aligned,timing_ready,crc_verified,packet_policy_ok\n";
+      handover_log<<"elapsed,phase,phase_elapsed_s,fc_alive,armed,main_mode,sub_mode,pose_ok,timing_ok,sensing_ok,gps_rx,gps_fix,gps_ok,route_valid,horizontal_error_m,horizontal_position_ok,altitude_rel_m,altitude_ok,speed_mps,speed_ok,ready,ready_stable_s,mode_switch_sent,waiting_offboard,mode_ack_seen,mode_ack_result,mode_ack_age_s\n";
+      if(!lidar_only) {
+        rx_chunks<<"host_monotonic,offset,size\n";
+        tx_chunks<<"host_monotonic,offset,size\n";
+      }
     }
     std::unique_ptr<AsyncPlanner> async(new AsyncPlanner(app.adapter,app.pilot.cruise_alt_m));
     PlannerIO *planner=async.get();
@@ -140,7 +153,7 @@ int main(int argc,char **argv) {
     std::puts(lidar_only?"[LIDAR ONLY] Ethernet SDK2 directly to onboard; FCU serial is not opened":"[HARDWARE] real FCU; SDK2 cloud only");
     std::printf("[LIDAR PROFILE] policy=%s SN=%s type=%d frame=%.3fs range=[%.2f,%.2f] queue=%zu\n",app.lidar.allow_zero_crc?"mid360s_sample":"strict",app.lidar.expected_serial.c_str(),app.lidar.point_data_type,app.lidar.frame_duration_s,app.lidar.min_range_m,app.lidar.max_range_m,app.lidar.queue_capacity);
     std::puts(app.pilot.observe_only?"[OBSERVE] no task/mode/motion commands":"[CONTROL] GCS owns arm/takeoff/landing; onboard follows its local KML route");
-    const double begin=monotonicSeconds(); double now=begin,previous=now,last_report=-1e9;
+    const double begin=monotonicSeconds(); double now=begin,previous=now,last_report=-1e9,last_handover_log=-1e9;
     double last_uplink=-1e9; uint64_t uplink_failures=0;
     bool ptp_ready=false;
     double max_loop=0,last_input_ok=-1e9,clock_stable_since=begin; uint64_t aligned=0,rejected=0;
@@ -155,7 +168,14 @@ int main(int argc,char **argv) {
       pilot.setReceiveTime(now);
       if(!lidar_only&&!serial.isOpen()) {pilot.stop("serial disconnected");failed=true;break;}
       std::vector<uint8_t> bytes;serial.take(bytes);
-      if(!bytes.empty()) { if(raw_rx) { raw_rx.write(reinterpret_cast<const char*>(bytes.data()),bytes.size()); rx_chunks<<std::setprecision(16)<<now<<','<<rx_offset<<','<<bytes.size()<<'\n'; rx_offset+=bytes.size(); } pilot.onMavlinkBytes(bytes.data(),bytes.size()); }
+      if(!bytes.empty()) {
+        if(raw_rx) {
+          raw_rx.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());
+          rx_chunks<<std::setprecision(16)<<now<<','<<rx_offset<<','<<bytes.size()<<'\n';
+          rx_offset+=bytes.size();
+        }
+        pilot.onMavlinkBytes(bytes.data(),bytes.size());
+      }
       const bool stable=epoch.sample(monotonicSeconds(),unixSeconds());
       if(!stable || sync_generation!=pilot.timeAlignment().generation()) {
         clock_stable_since=now;last_input_ok=-1e9;sync_generation=pilot.timeAlignment().generation();
@@ -195,16 +215,39 @@ int main(int argc,char **argv) {
       }
       std::vector<std::vector<uint8_t>> tx; if(!lidar_only) pilot.tick(now,tx);
       for(const auto &f:tx) {
-        if(raw_tx)raw_tx.write(reinterpret_cast<const char*>(f.data()),f.size());
         if(!serial.write(f.data(),f.size())) {pilot.stop("serial write failed or timed out");failed=true;break;}
+        if(raw_tx) {
+          raw_tx.write(reinterpret_cast<const char*>(f.data()),f.size());
+          tx_chunks<<std::setprecision(16)<<now<<','<<tx_offset<<','<<f.size()<<'\n';
+          tx_offset+=f.size();
+        }
       }
       if(pilot.phase()!=last_phase) {
         // Preview may have aged while GCS starts flight: never reuse it at takeover.
         if(planner&&pilot.phase()==Phase::PRE_OFFBOARD)planner->dropTrajectory();
         std::printf("[STATE] %.2fs %s (%s)\n",now-begin,phaseName(pilot.phase()),holdReasonName(pilot.holdReason()));last_phase=pilot.phase();}
+      if(handover_log && now-last_handover_log>=0.2) {
+        last_handover_log=now;
+        const auto d=pilot.handoverDiagnostics(now);
+        handover_log<<std::setprecision(12)<<now-begin<<','<<phaseName(pilot.phase())<<','<<d.phase_elapsed_s<<','
+          <<d.fc_alive<<','<<d.armed<<','<<unsigned(d.main_mode)<<','<<unsigned(d.sub_mode)<<','
+          <<d.pose_ok<<','<<d.timing_ok<<','<<d.sensing_ok<<','<<d.gps_rx<<','<<unsigned(d.gps_fix_type)<<','
+          <<d.gps_ok<<','<<d.route_valid<<','<<d.horizontal_error_m<<','<<d.horizontal_position_ok<<','
+          <<d.altitude_rel_m<<','<<d.altitude_ok<<','<<d.speed_mps<<','<<d.speed_ok<<','<<d.ready<<','
+          <<d.ready_stable_s<<','<<d.mode_switch_sent<<','<<d.waiting_offboard<<','<<d.mode_ack_seen<<','
+          <<unsigned(d.mode_ack_result)<<','<<d.mode_ack_age_s<<'\n';
+        handover_log.flush();
+      }
       if(now-last_report>=1) {
         last_report=now; const auto st=async->stats(); const auto ls=lidar.stats(); const auto &ts=pilot.timeAlignment();
+        if(raw_rx) { raw_rx.flush(); raw_tx.flush(); rx_chunks.flush(); tx_chunks.flush(); }
         std::printf("[STATUS] t=%.1f %s GPS=%u pose=%d sync=%d n=%d RTT=%.2fms reject=%llu lidar=%llu type=%u ptp=%d aligned=%llu map=%d loop_max=%.1fms CRC=%llu\n",now-begin,phaseName(pilot.phase()),pilot.gpsFixType(),pilot.poseFresh(now),pilot.clockReady(now),ts.samples(),ts.rtt()*1000,(unsigned long long)ts.rejected(),(unsigned long long)ls.packets,ls.time_type,ptp_ready,(unsigned long long)aligned,st.inflate_samples,max_loop*1000,(unsigned long long)pilot.crcErrors());
+        const auto d=pilot.handoverDiagnostics(now);
+        std::printf("[HANDOVER] phase=%s fc=%d armed=%d mode=%u sub=%u pose=%d timing=%d sensing=%d gps_rx=%d fix=%u gps=%d route=%d xy=%.2fm/%d alt=%.2fm/%d speed=%.2fmps/%d ready=%d stable=%.2fs request=%d waiting=%d ack=%d result=%u age=%.2fs\n",
+          phaseName(pilot.phase()),d.fc_alive,d.armed,unsigned(d.main_mode),unsigned(d.sub_mode),d.pose_ok,d.timing_ok,d.sensing_ok,
+          d.gps_rx,unsigned(d.gps_fix_type),d.gps_ok,d.route_valid,d.horizontal_error_m,d.horizontal_position_ok,
+          d.altitude_rel_m,d.altitude_ok,d.speed_mps,d.speed_ok,d.ready,d.ready_stable_s,d.mode_switch_sent,
+          d.waiting_offboard,d.mode_ack_seen,unsigned(d.mode_ack_result),d.mode_ack_age_s);
         rusage memory{}; getrusage(RUSAGE_SELF, &memory);
         std::printf("[EGO] trajectory=%d plans_ok=%llu plans_fail=%d optimizations=%llu astar_ok=%llu/%llu tracked=%llu holds=%llu sent=%llu cruise_holds=%llu plan_last=%.1fms plan_max=%.1fms rss_peak=%.1fMiB\n",
           st.trajectory_active,(unsigned long long)st.plan_success,st.plan_fail,

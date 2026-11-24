@@ -68,6 +68,14 @@ if(BUILD_TESTING)
   add_test(NAME serial_port_selftest COMMAND serial_port_selftest)
   set_tests_properties(serial_port_selftest PROPERTIES TIMEOUT 5)
 
+  add_executable(mavlink_rx_test test/mavlink_rx_test.cpp src/serial_port.cpp)
+  target_include_directories(mavlink_rx_test PRIVATE src)
+  target_link_libraries(mavlink_rx_test pthread)
+
+  add_executable(mavlink_offboard_once test/mavlink_offboard_once.cpp src/serial_port.cpp)
+  target_include_directories(mavlink_offboard_once PRIVATE src)
+  target_link_libraries(mavlink_offboard_once pthread)
+
   add_executable(lidar_sample_replay_selftest test/lidar_sample_replay_selftest.cpp ${SENSOR_DIR}/src/frame_assembler.cpp ${SENSOR_DIR}/src/livox_parser.cpp)
   target_include_directories(lidar_sample_replay_selftest PRIVATE ${LIVOX_SDK2_DIR}/sdk_core)
   target_link_libraries(lidar_sample_replay_selftest livox_lidar_sdk_static pthread)

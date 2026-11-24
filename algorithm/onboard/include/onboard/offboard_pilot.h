@@ -14,6 +14,7 @@
 // 规划层通过 PlannerIO 接口接入，便于离线用假规划器验证整条时序。
 
 #include <cstdint>
+#include <limits>
 #include <vector>
 #include <Eigen/Eigen>
 #include <ego_core/trajectory_tracker.h>
@@ -82,6 +83,26 @@ namespace ego_onboard
   };
   const char *phaseName(Phase p);
 
+  struct HandoverDiagnostics
+  {
+    bool fc_alive = false;
+    bool armed = false;
+    uint8_t main_mode = 0, sub_mode = 0;
+    bool pose_ok = false, timing_ok = false, sensing_ok = false;
+    bool gps_rx = false, gps_ok = false;
+    uint8_t gps_fix_type = 0;
+    bool route_valid = false, horizontal_position_ok = false, altitude_ok = false, speed_ok = false;
+    double horizontal_error_m = std::numeric_limits<double>::quiet_NaN();
+    double altitude_rel_m = std::numeric_limits<double>::quiet_NaN();
+    double speed_mps = std::numeric_limits<double>::quiet_NaN();
+    bool ready = false;
+    double phase_elapsed_s = 0.0, ready_stable_s = 0.0;
+    bool mode_switch_sent = false, waiting_offboard = false;
+    bool mode_ack_seen = false;
+    uint8_t mode_ack_result = 255;
+    double mode_ack_age_s = -1.0;
+  };
+
   class OffboardPilot
   {
   public:
@@ -100,6 +121,8 @@ namespace ego_onboard
       double cruise_alt_m = 50.0; // 仅用于地面站起飞后接管的高度检查
       double handover_alt_tolerance_m = 1.0;      // 接管高度允许误差
       double handover_position_tolerance_m = 5.0; // 接管水平位置允许误差
+      double handover_stable_s = 1.5;             // 高度/位置和悬停速度连续满足的时间
+      double handover_max_speed_mps = 0.3;        // 认为已悬停的最大三维速度
       double wp_reach_tol = 1.5;     // 航点到达判定
       // 规划
       bool use_planner = true;       // false = 只跑时序（离线验证用）
@@ -170,6 +193,7 @@ namespace ego_onboard
     bool armed() const { return armed_; }
     uint8_t mainMode() const { return main_mode_; }
     uint8_t subMode() const { return sub_mode_; }
+    HandoverDiagnostics handoverDiagnostics(double now) const;
     const GeoOrigin &origin() const { return origin_; }
     int currentLeg() const { return leg_; }
     int routeSize() const { return (int)route_.size(); }
@@ -207,11 +231,11 @@ namespace ego_onboard
 
     // 发送辅助
     template <typename Msg>
-    void send(const Msg &m, std::vector<std::vector<uint8_t>> &out)
+    void send(const Msg &m, std::vector<std::vector<uint8_t>> &out, bool mavlink_v2 = false)
     {
       uint8_t buf[255];
       m.encode(buf);
-      auto f = pack(cfg_.sysid, cfg_.compid, seq_++, Msg::ID, buf, Msg::LEN, true);
+      auto f = pack(cfg_.sysid, cfg_.compid, seq_++, Msg::ID, buf, Msg::LEN, mavlink_v2);
       if (!f.empty())
         out.push_back(std::move(f));
     }
@@ -244,6 +268,7 @@ namespace ego_onboard
 
     double t_start_ = 0.0;  // 本次任务开始时刻
     double t_phase_ = 0.0;  // 进入当前阶段的时刻
+    double t_handover_candidate_ = -1e9;
     double t_last_hb_ = -1e9;
     double t_last_fc_hb_ = -1e9;
     double t_last_setpoint_ = -1e9;
@@ -252,6 +277,9 @@ namespace ego_onboard
     uint16_t last_cmd_ = 0;
     bool mode_switch_sent_ = false; // 是否已发过切 Offboard 的 COMMAND_LONG
     bool waiting_offboard_ = false; // 已请求切换，正在等飞控确认
+    bool mode_ack_seen_ = false;
+    uint8_t mode_ack_result_ = 255;
+    double t_last_mode_ack_ = -1e9;
     bool rates_requested_ = false;  // 是否已发过提频请求（只发一次）
     double hold_yaw_ = 0.0;         // 悬停时保持的偏航角
 

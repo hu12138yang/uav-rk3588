@@ -99,6 +99,8 @@ namespace ego_onboard
     {
       get(n, "handover_alt_tolerance_m", out.pilot.handover_alt_tolerance_m);
       get(n, "handover_position_tolerance_m", out.pilot.handover_position_tolerance_m);
+      get(n, "handover_stable_s", out.pilot.handover_stable_s);
+      get(n, "handover_max_speed_mps", out.pilot.handover_max_speed_mps);
       get(n, "wp_reach_tol", out.pilot.wp_reach_tol);
 
       get(n, "pre_offboard_stream_s", out.pilot.pre_offboard_stream_s);
@@ -343,7 +345,9 @@ namespace ego_onboard
       return false;
     }
 
-    if (!(out.pilot.setpoint_hz >= 5 && out.pilot.setpoint_hz <= 50) ||
+    if (!std::isfinite(out.pilot.handover_stable_s) || out.pilot.handover_stable_s < 0.5 || out.pilot.handover_stable_s > 10.0 ||
+      !std::isfinite(out.pilot.handover_max_speed_mps) || out.pilot.handover_max_speed_mps <= 0.0 || out.pilot.handover_max_speed_mps > 2.0 ||
+      !(out.pilot.setpoint_hz >= 5 && out.pilot.setpoint_hz <= 50) ||
         !(out.adapter.sensing_timeout_s > 0 && out.adapter.sensing_timeout_s <= 1.0) ||
         !out.adapter.extrinsic.R.allFinite() || !out.adapter.extrinsic.t.allFinite() ||
         (out.adapter.extrinsic.R.transpose()*out.adapter.extrinsic.R-Eigen::Matrix3d::Identity()).norm()>1e-5 ||

@@ -81,6 +81,8 @@ int main(int argc, char **argv) {
   uint8_t mode = MODE_POS_HOLD;
   double next_scan = begin, next_report = begin, maximum_deviation = 0;
   uint64_t matched = 0, mismatched = 0, invalid_wire = 0, scans = 0;
+  bool non_v1_wire = false, premature_handover = false;
+  bool speed_gate_reported = false, mode_ack_reported = false;
   bool collision_free = true, entered_cruise = false, passed_wall = false;
   Parser parser;
   while (monotonicSeconds() - begin < 25) {
@@ -97,9 +99,10 @@ int main(int argc, char **argv) {
     wrI32(global,4,int32_t(std::llround((lat + position.y()/meters_per_degree)*1e7)));
     wrI32(global,8,int32_t(std::llround((lon + position.x()/(meters_per_degree*std::cos(lat*radians)))*1e7)));
     wrI32(global,16,int32_t(std::llround(position.z()*1000)));
-    wrU16(global,20,uint16_t(int16_t(std::llround(velocity.y()*100))));
-    wrU16(global,22,uint16_t(int16_t(std::llround(velocity.x()*100))));
-    wrU16(global,24,uint16_t(int16_t(std::llround(-velocity.z()*100))));
+    const Eigen::Vector3d gps_velocity = now-begin < 2.5 ? Eigen::Vector3d(0.5,0,0) : velocity;
+    wrU16(global,20,uint16_t(int16_t(std::llround(gps_velocity.y()*100))));
+    wrU16(global,22,uint16_t(int16_t(std::llround(gps_velocity.x()*100))));
+    wrU16(global,24,uint16_t(int16_t(std::llround(-gps_velocity.z()*100))));
     feed(pilot,now,GlobalPositionInt::ID,global,sizeof(global));
     uint8_t attitude[28]{}; wrU32(attitude,0,boot); wrF32(attitude,12,kPi/2);
     feed(pilot,now,Attitude::ID,attitude,sizeof(attitude));
@@ -121,7 +124,9 @@ int main(int argc, char **argv) {
     pilot.setInputReady(planner.sensingHealthy());
     planner.stepped = false;
     std::vector<std::vector<uint8_t>> tx; pilot.tick(now,tx);
-    for (const auto &wire : tx) for (const auto byte : wire) {
+    for (const auto &wire : tx) {
+      if (wire.empty() || wire.front() != 0xFE) non_v1_wire = true;
+      for (const auto byte : wire) {
       MavMessage message;
       if (!parser.push(byte,message)) continue;
       if (!message.crc_checked) { ++invalid_wire; continue; }
@@ -136,7 +141,13 @@ int main(int argc, char **argv) {
       } else if (message.msgid == CommandLong::ID) {
         uint8_t p[CommandLong::LEN]{};
         padPayload(message.payload.data(),message.payload.size(),p,sizeof(p));
-        if (rdU16(p,28) == CMD_DO_SET_MODE && rdF32(p,4) == MODE_OFFBOARD) mode = MODE_OFFBOARD;
+        if (rdU16(p,28) == CMD_DO_SET_MODE && rdF32(p,4) == MODE_OFFBOARD) {
+          mode = MODE_OFFBOARD;
+          uint8_t ack[CommandAck::LEN]{};
+          wrU16(ack,0,CMD_DO_SET_MODE);
+          ack[2] = 0;
+          feed(pilot,now,CommandAck::ID,ack,sizeof(ack));
+        }
       } else if (message.msgid == SetPositionTargetLocalNed::ID) {
         uint8_t p[SetPositionTargetLocalNed::LEN]{};
         padPayload(message.payload.data(),message.payload.size(),p,sizeof(p));
@@ -161,8 +172,17 @@ int main(int argc, char **argv) {
           }
         }
       }
+      }
     }
     entered_cruise = entered_cruise || pilot.phase() == Phase::OFFBOARD_CRUISE;
+    if (now-begin < 2.5 && (pilot.phase() == Phase::PRE_OFFBOARD || pilot.phase() == Phase::OFFBOARD_CRUISE))
+      premature_handover = true;
+    const auto handover = pilot.handoverDiagnostics(now);
+    if (now-begin < 2.5 && pilot.phase() == Phase::WAIT_GROUND_START &&
+        handover.speed_mps > app.pilot.handover_max_speed_mps)
+      speed_gate_reported = speed_gate_reported || !handover.speed_ok;
+    mode_ack_reported = mode_ack_reported ||
+        (handover.mode_ack_seen && handover.mode_ack_result == 0);
     if (now >= next_report) {
       next_report = now + 1;
       const auto st = planner.worker.stats();
@@ -184,6 +204,10 @@ int main(int argc, char **argv) {
     (unsigned long long)matched,(unsigned long long)mismatched,maximum_deviation,memory.ru_maxrss/1024.0,
     sizeof(GridNode),sizeof(ego_sensor::LidarPoint));
   check(entered_cruise,"real pilot completes clock/GPS/perception gates and enters Offboard");
+  check(!premature_handover,"handover remains blocked while reported FCU speed exceeds the hover threshold");
+  check(speed_gate_reported,"handover diagnostics identify excessive speed as a blocked gate");
+  check(mode_ack_reported,"handover diagnostics retain the Offboard command ACK result");
+  check(!non_v1_wire,"all production control outputs use MAVLink v1 frames");
   check(st.ego_optimizations > 0 && st.astar_successes > 0,"EGO optimizer and obstacle A* searches actually execute");
   check(matched > 50 && mismatched == 0 && invalid_wire == 0,"CRC-valid outgoing setpoints match EGO positions and yaw after ENU/NED conversion");
   check(pilot.plannerSetpoints() == matched,"production EGO setpoint counter agrees with independently decoded outgoing frames");

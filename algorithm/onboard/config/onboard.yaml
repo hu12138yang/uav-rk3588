@@ -24,12 +24,14 @@ mission_input:
   file: "missions/mission.kml" # 相对启动工作目录；开机服务固定为项目根目录
   wait_for_file: true
   height_mode: constant
-  constant_alt_m: 12.0       # 测试巡航参考高度，相对 HOME；按 10～15 m 范围取值
+  constant_alt_m: 5.0        # 固定巡航高度，相对 HOME（m）
   max_bytes: 5242880
   max_waypoints: 2000
 mission:
-  handover_position_tolerance_m: 5.0 # 起点水平误差超过此值不接管
-  handover_alt_tolerance_m: 0.5 # 参考高度 12 m，对应接管范围 11.5～12.5 m
+  handover_position_tolerance_m: 8.0 # 起点水平误差超过此值不接管
+  handover_alt_tolerance_m: 0.5 # 接管高度范围为巡航高度 ±0.5 m
+  handover_stable_s: 1.5       # RTK/位置/高度/定点和低速连续满足后才接管
+  handover_max_speed_mps: 0.3  # 三维速度低于此值才认为悬停稳定
   wp_reach_tol: 2.0
   pre_offboard_stream_s: 1.5
   use_planner: true
@@ -66,14 +68,14 @@ output:
 # 机体
 vehicle:
   radius: 1.24
-  min_obstacle_gap: 1.5      
+  min_obstacle_gap: 1.5
 
 # 地图
 map:
   resolution: 0.25
   size_xy: [108.0, 108.0]    # 半宽 54 m 覆盖 8 m 滑窗偏移 + 40 m 入图及膨胀余量
-  altitude_band_half: 10.0   # 高度带向上半宽
-  virtual_floor_height: 2.0  # 膨胀后的最低可通行中心高度，相对 HOME；不随当前高度移动
+  virtual_floor_height: 3.0  # 膨胀后的机体中心高度下界，相对 HOME
+  virtual_ceiling_height: 10.0 # 膨胀后的机体中心高度上界，相对 HOME
   map_margin_z: 3.25
   update_range_xy: 40.0      # 按典型量程入图；不依赖 40～100 m 的远距回波完成制动
   update_range_z: 10.0
@@ -88,19 +90,17 @@ planner:
   max_acc: 4.0
   planning_horizon: 7.5     # m；5 m/s、4 m/s² 下理想制动 3.125 m，含延迟及膨胀需 10.725 m
   local_target_step: 0.5
-  local_target_max_ratio: 1.5 
+  local_target_max_ratio: 1.5
   replan_period: 0.2         # 每个重规划周期前进约 1 m
   goal_tolerance: 0.5
-  obstacle_clearance: 0.5    
+  obstacle_clearance: 0.5
   ctrl_pt_dist: 0.4          # 随速度减半，保持控制点时间尺度
   time_forward: 1.0         # yaw 前视约 5 m
-  astar_pool: [100, 100, 100] 
+  astar_pool: [100, 100, 100]
 
 # 外参：雷达 -> 机体
 extrinsic:
-  R: [1, 0, 0,
-      0, 1, 0,
-      0, 0, 1]
+  R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
   t: [0.0, 0.0, 0.0]
 
 # 机载 -> 地面站 上报（UDP，2 Hz JSON）

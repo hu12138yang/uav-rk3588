@@ -86,9 +86,9 @@ namespace ego_mav
     bool crc_checked = false; // 表内报文才做校验
   };
 
-  // 打包（默认 v2；飞控上电默认 v1，需要先发 v2 心跳包切过去）
+  // 默认使用飞控兼容的 MAVLink v1；解析器仍同时兼容 v1/v2 下行帧。
   inline std::vector<uint8_t> pack(uint8_t sysid, uint8_t compid, uint8_t seq, uint32_t msgid,
-                                   const uint8_t *payload, size_t len, bool v2 = true, bool signed_frame = false)
+                                   const uint8_t *payload, size_t len, bool v2 = false, bool signed_frame = false)
   {
     std::vector<uint8_t> f;
     uint8_t extra = 0;
